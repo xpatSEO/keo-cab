@@ -181,9 +181,16 @@ def inject_into_json(all_clean: dict[str, dict]) -> None:
     with open(JSON_IN) as f:
         data = json.load(f)
 
-    # normalisation clé : la CSV a "Vitry Sur Seine" mais le JSON a "Vitry-sur-Seine"
+    # normalisation clé : la CSV a "Vitry Sur Seine" mais le JSON a "Vitry-sur-Seine",
+    # et le JSON peut avoir des accents absents de la CSV ("Saint-Étienne" vs "Saint Etienne").
+    import unicodedata
+
     def norm(v: str) -> str:
-        return re.sub(r"[\s\-]+", "", v).lower()
+        stripped = "".join(
+            c for c in unicodedata.normalize("NFD", v)
+            if unicodedata.category(c) != "Mn"
+        )
+        return re.sub(r"[\s\-]+", "", stripped).lower()
 
     clean_by_norm = {norm(k): v for k, v in all_clean.items()}
 
@@ -219,14 +226,8 @@ def main() -> int:
     parser.add_argument("--resume", action="store_true", help="Saute les villes déjà présentes dans le cache")
     args = parser.parse_args()
 
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("ERREUR: ANTHROPIC_API_KEY non définie.", file=sys.stderr)
-        return 2
-
     CLEAN_DIR.mkdir(exist_ok=True)
     JSON_OUT.mkdir(parents=True, exist_ok=True)
-
-    client = anthropic.Anthropic()
 
     with open(CSV_IN, newline="") as f:
         rows = list(csv.DictReader(f, delimiter=";"))
@@ -235,6 +236,9 @@ def main() -> int:
         rows = [r for r in rows if r["ville"].strip().lower() == args.ville.lower()]
     if args.limit:
         rows = rows[: args.limit]
+
+    # client API instancié paresseusement : inutile si tout est en cache
+    client: anthropic.Anthropic | None = None
 
     all_clean: dict[str, dict] = {}
     for i, row in enumerate(rows, 1):
@@ -246,6 +250,11 @@ def main() -> int:
             print(f"[{i}/{len(rows)}] {ville}: cache hit")
             continue
         print(f"[{i}/{len(rows)}] {ville}: génération...", flush=True)
+        if client is None:
+            if not os.environ.get("ANTHROPIC_API_KEY"):
+                print("ERREUR: ANTHROPIC_API_KEY non définie (nécessaire pour générer).", file=sys.stderr)
+                return 2
+            client = anthropic.Anthropic()
         try:
             obj = generate_for_ville(client, row)
         except Exception as e:
