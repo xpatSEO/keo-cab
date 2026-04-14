@@ -181,9 +181,16 @@ def inject_into_json(all_clean: dict[str, dict]) -> None:
     with open(JSON_IN) as f:
         data = json.load(f)
 
-    # normalisation clé : la CSV a "Vitry Sur Seine" mais le JSON a "Vitry-sur-Seine"
+    # normalisation clé : la CSV a "Vitry Sur Seine" mais le JSON a "Vitry-sur-Seine",
+    # et le JSON peut avoir des accents absents de la CSV ("Saint-Étienne" vs "Saint Etienne").
+    import unicodedata
+
     def norm(v: str) -> str:
-        return re.sub(r"[\s\-]+", "", v).lower()
+        stripped = "".join(
+            c for c in unicodedata.normalize("NFD", v)
+            if unicodedata.category(c) != "Mn"
+        )
+        return re.sub(r"[\s\-]+", "", stripped).lower()
 
     clean_by_norm = {norm(k): v for k, v in all_clean.items()}
 
